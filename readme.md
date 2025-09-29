@@ -107,3 +107,18 @@ pip install -r requirements.txt
 - Tokens are the real computation and billing unit for LLMs → the token-based splitter ensures chunks stay within predictable bounds.
 - HyDE works especially well for abstract queries where the answer might not directly contain the user's keywords.
 - Current pipeline runs locally with SentenceTransformers embeddings, but can be easily extended to use text-embedding-3-small or other OpenAI embedding models.
+
+## Limitations of This Approach
+
+While this project demonstrates how Hypothetical Document Embeddings (HyDE) can shift the query representation and retrieve different documents, there is an important caveat:
+
+- In the visualizations, the green points (retrieved documents) are retrieved **using the augmented query** (original + hypothetical answer).  
+- It is therefore expected that these documents lie closer to the orange `X` (augmented query) in the embedding space. This only confirms that the retrieval process works as intended: documents close to a query are retrieved as similar.
+
+This does **not by itself prove** that query augmentation improves the usefulness of retrieval.  
+To properly evaluate the benefit of HyDE, one would need to:
+
+1. Retrieve documents separately using the **original query** and the **augmented query**.  
+2. Compare the usefulness/relevance of both sets of documents for answering the original question (e.g., via human annotation, benchmarks, or downstream QA performance).  
+
+Thus, the UMAP plots should be interpreted as **illustrations of how query expansion shifts the search space**, not as conclusive evidence that the retrieval quality is improved.
