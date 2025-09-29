@@ -1,8 +1,11 @@
-from helper_utils import word_wrap
+from helper_utils import project_embeddings, word_wrap
 from pypdf import PdfReader
 import os 
 from openai import OpenAI
 import chromadb
+import umap  # using UMAP for dimensionality reduction to 2D/3D
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  # ensures 3D projection is registered
 
 # --- Splitting the document into chunks using LangChain utilities -------------
 from langchain.text_splitter import (
@@ -174,7 +177,7 @@ retrieved_documents = results["documents"][0]
 #    print(word_wrap(document))
 #    print("---------------------------------------------------------------------")
 
-def augment_query_generated(query, model="gpt-5-nano"):
+def augment_query_generated(query, model="gpt-4.1-mini"):
     # Defining the system prompt that frames the model’s role.
     # In this case, the model is instructed to act as a financial research assistant
     # and generate plausible answers that one might expect in annual reports.
@@ -231,3 +234,295 @@ results = chroma_collection.query(
 
 # Extracting the retrieved document chunks corresponding to the first (and only) query.
 retrieved_documents = results["documents"][0]
+
+# -------------------------------------------------------------------------------------
+# UMAP projection of collection, queries, and retrieved embeddings
+# -------------------------------------------------------------------------------------
+
+# -------------------------------------------------------------------------------------
+# Extract embeddings for the entire collection
+# -------------------------------------------------------------------------------------
+
+# Loading all stored embeddings from the Chroma collection.
+# These vectors represent the precomputed embeddings of the PDF chunks.
+embeddings = chroma_collection.get(include=["embeddings"])["embeddings"]
+
+# -------------------------------------------------------------------------------------
+# Train a UMAP model for dimensionality reduction
+# -------------------------------------------------------------------------------------
+
+# Fitting a UMAP transformer on the full set of embeddings.
+# UMAP reduces high-dimensional vectors (e.g., 384/768/1536 dims) into 2D/3D
+# for visualization and qualitative analysis of neighborhood structure.
+# 2D
+# umap_transform = umap.UMAP(random_state=0, transform_seed=0).fit(embeddings)
+# UMAP to 3D instead of 2D
+umap_transform = umap.UMAP(n_components=3, random_state=0, transform_seed=0).fit(embeddings)
+# -------------------------------------------------------------------------------------
+# Project the entire dataset into a low-dimensional space
+# -------------------------------------------------------------------------------------
+
+# Applying the trained UMAP transformer to all collection embeddings.
+# The result is a cloud of points in 2D/3D, ready to be plotted.
+projected_dataset_embeddings = project_embeddings(embeddings, umap_transform)
+
+# -------------------------------------------------------------------------------------
+# Extract embeddings for the queries
+# -------------------------------------------------------------------------------------
+
+# Retrieving the embeddings of the top-k documents returned by the last query call.
+retrieved_embeddings = results["embeddings"][0]
+
+# Computing the embedding for the original user query.
+original_query_embedding = embedding_function([original_query])
+
+# Computing the embedding for the augmented (question + hypothetical answer) query.
+augmented_query_embedding = embedding_function([joint_query])
+
+# -------------------------------------------------------------------------------------
+# Project queries and retrieved results in the same UMAP space
+# -------------------------------------------------------------------------------------
+
+# Projecting the original query embedding into the UMAP space to compare
+# its position relative to the dataset and retrieved chunks.
+projected_original_query_embedding = project_embeddings(
+    original_query_embedding, umap_transform
+)
+
+# Projecting the augmented query embedding; this enables a visual comparison
+# of how the augmentation shifts the query in the embedding manifold.
+projected_augmented_query_embedding = project_embeddings(
+    augmented_query_embedding, umap_transform
+)
+
+# Projecting the retrieved chunk embeddings to visualize their neighborhood
+# relative to the original and augmented queries.
+projected_retrieved_embeddings = project_embeddings(
+    retrieved_embeddings, umap_transform
+)
+
+# -------------------------------------------------------------------------------------
+# Visualization 2D : Projected queries and retrieved documents in embedding space
+# -------------------------------------------------------------------------------------
+
+# Initializing a new figure for plotting the embedding space.
+# plt.figure()
+
+# -------------------------------------------------------------------------------------
+# Plotting the full dataset embeddings (all PDF chunks)
+# -------------------------------------------------------------------------------------
+# Each point represents a chunk from the PDF projected into 2D space.
+# Gray color is used to denote the background distribution of the dataset.
+# plt.scatter(
+#     projected_dataset_embeddings[:, 0],  # x-coordinates of all projected chunks
+#     projected_dataset_embeddings[:, 1],  # y-coordinates of all projected chunks
+#     s=10,                                # point size (small for background context)
+#     color="gray",                        # neutral color to highlight other points
+# )
+
+# -------------------------------------------------------------------------------------
+# Plotting the retrieved embeddings (top-k results from the query)
+# -------------------------------------------------------------------------------------
+# Green circles with no fill (only edges) are used to visually distinguish
+# retrieved results from the full dataset.
+# plt.scatter(
+#     projected_retrieved_embeddings[:, 0],   # x-coordinates of retrieved chunks
+#     projected_retrieved_embeddings[:, 1],   # y-coordinates of retrieved chunks
+#     s=100,                                  # larger size for visibility
+#     facecolors="none",                      # hollow markers
+#     edgecolors="g",                         # green outline
+# )
+
+# -------------------------------------------------------------------------------------
+# Plotting the original query embedding
+# -------------------------------------------------------------------------------------
+# Marked as a red "X" to emphasize its role as the starting point of retrieval.
+# plt.scatter(
+#     projected_original_query_embedding[:, 0],  # x-coordinate of original query
+#     projected_original_query_embedding[:, 1],  # y-coordinate of original query
+#     s=150,                                     # even larger size for salience
+#     marker="X",                                # "X" marker for distinctiveness
+#     color="r",                                 # red color for the original query
+# )
+
+# -------------------------------------------------------------------------------------
+# Plotting the augmented query embedding
+# -------------------------------------------------------------------------------------
+# Marked as an orange "X" to visually compare how augmentation shifts the query
+# in embedding space relative to the original query.
+# plt.scatter(
+#     projected_augmented_query_embedding[:, 0],  # x-coordinate of augmented query
+#     projected_augmented_query_embedding[:, 1],  # y-coordinate of augmented query
+#     s=150,                                      # large for clear comparison
+#     marker="X",                                 # "X" marker to match original query
+#     color="orange",                             # orange color for augmentation
+# )
+
+# -------------------------------------------------------------------------------------
+# Figure formatting
+# -------------------------------------------------------------------------------------
+
+# Enforcing equal aspect ratio so distances in the scatter plot are meaningful.
+# plt.gca().set_aspect("equal", "datalim")
+
+# Using the original query text as the title for context.
+# plt.title(f"{original_query}")
+
+# Hiding axes for a cleaner visualization.
+# plt.axis("off")
+
+# Rendering the plot to the notebook or interactive window.
+# plt.show()
+
+# -------------------------------------------------------------------------------------
+# Visualization (3D): Projected queries and retrieved documents in embedding space
+# -------------------------------------------------------------------------------------
+# fig = plt.figure()
+# ax = fig.add_subplot(111, projection="3d")
+
+# -------------------------------------------------------------------------------------
+# Plotting the full dataset embeddings (all PDF chunks) in 3D
+# -------------------------------------------------------------------------------------
+# Each point represents a chunk from the PDF projected into 3D space.
+# ax.scatter(
+#     projected_dataset_embeddings[:, 0],
+#     projected_dataset_embeddings[:, 1],
+#     projected_dataset_embeddings[:, 2],
+#     s=10,
+#     color="gray",
+#     depthshade=False,  # keep points visually consistent
+# )
+
+# -------------------------------------------------------------------------------------
+# Plotting the retrieved embeddings (top-k results from the query)
+# -------------------------------------------------------------------------------------
+# ax.scatter(
+#     projected_retrieved_embeddings[:, 0],
+#     projected_retrieved_embeddings[:, 1],
+#     projected_retrieved_embeddings[:, 2],
+#     s=100,
+#     facecolors="none",
+#     edgecolors="g",
+#     depthshade=False,
+# )
+
+# -------------------------------------------------------------------------------------
+# Plotting the original query embedding
+# -------------------------------------------------------------------------------------
+# ax.scatter(
+#     projected_original_query_embedding[:, 0],
+#     projected_original_query_embedding[:, 1],
+#     projected_original_query_embedding[:, 2],
+#     s=150,
+#     marker="X",
+#     color="r",
+#     depthshade=False,
+# )
+
+# -------------------------------------------------------------------------------------
+# Plotting the augmented query embedding
+# -------------------------------------------------------------------------------------
+# ax.scatter(
+#     projected_augmented_query_embedding[:, 0],
+#     projected_augmented_query_embedding[:, 1],
+#     projected_augmented_query_embedding[:, 2],
+#     s=150,
+#     marker="X",
+#     color="orange",
+#     depthshade=False,
+# )
+
+# -------------------------------------------------------------------------------------
+# Figure formatting (3D)
+# -------------------------------------------------------------------------------------
+
+# Set equal scaling on all axes so distances are meaningful in 3D.
+# Note: box_aspect requires Matplotlib 3.3+
+# ax.set_box_aspect((1, 1, 1))
+
+# Title with the original query for context.
+# ax.set_title(f"{original_query}")
+
+# Optional: hide grid/axes if you want a cleaner look
+# ax.set_axis_off()  # (3D axes do not support full axis-off like 2D)
+# ax.grid(False)
+
+# plt.show()
+
+
+
+# Gray           → all chunks from the dataset (the full embedding space).
+# Green (hollow) → chunks retrieved as relevant to the query.
+# Red X          → the original query.
+# Orange X       → the expanded query (original + hypothetical answer).
+
+
+
+# -------------------------------------------------------------------------------------
+# Final answer synthesis: pass original question + retrieved context to an LLM
+# -------------------------------------------------------------------------------------
+
+# Using a fresh client for generation, independent from the expansion step.
+llm_client2 = OpenAI(api_key=OPENAI_API)
+
+# -------------------------------------------------------------------------------------
+# Utility: format retrieved context for the LLM
+# -------------------------------------------------------------------------------------
+
+def format_ranked_context(docs, max_chars=1200):
+    """
+    Formats retrieved documents as a ranked, numbered context block.
+
+    Args:
+        docs (List[str]): Retrieved chunks ordered from most to least relevant.
+        max_chars (int): Soft cap to truncate overly long chunks for prompt hygiene.
+
+    Returns:
+        str: A human-readable, numbered context section (highest rank first).
+    """
+    lines = []
+    for i, d in enumerate(docs, start=1):
+        snippet = (d[:max_chars]).strip()
+        lines.append(f"[{i}] {snippet}")
+    return "\n\n".join(lines)
+
+# Build the context from the previously retrieved documents (ranked: best first).
+ranked_context = format_ranked_context(retrieved_documents)
+
+# -------------------------------------------------------------------------------------
+# LLM call: concise, grounded answer using only the retrieved context
+# -------------------------------------------------------------------------------------
+
+# System message constrains behavior: concise, cite chunks, avoid unsupported claims.
+system_msg = (
+    "You are a concise financial research assistant. Answer ONLY using the provided context. "
+    "If the answer is not present, say you don't know. When supporting statements, cite the "
+    "relevant chunk indices like [1], [2]. Prioritize earlier chunks—they are ranked as more relevant."
+)
+
+# User message provides the question and the ranked context.
+user_msg = (
+    f"Question:\n{original_query}\n\n"
+    f"Context (ranked, highest relevance first):\n{ranked_context}\n\n"
+    "Instructions:\n"
+    "- Use the context verbatim where possible.\n"
+    "- Prefer earlier chunks if there is conflict.\n"
+    "- Keep the answer brief and precise.\n"
+)
+
+# Execute the chat completion with a small, conservative temperature.
+final_response = llm_client2.chat.completions.create(
+    model="gpt-4.1-mini",            # choose a model that supports temperature controls
+    temperature=0.25,                # low randomness for factual synthesis
+    max_tokens=500,                  # concise final answer
+    messages=[
+        {"role": "system", "content": system_msg},
+        {"role": "user",   "content": user_msg},
+    ],
+)
+
+# Extract and display the final, concise answer.
+final_answer = final_response.choices[0].message.content
+print("\n------------------------------------------------------- Final Answer -------------------------------------------------------")
+print(f"Original question: {original_query}")
+print(final_answer)
