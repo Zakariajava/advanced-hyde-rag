@@ -13,6 +13,7 @@ from langchain.text_splitter import (
 from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 OPENAI_API = os.getenv("OPENAI_API")
+llm_client = OpenAI(api_key=OPENAI_API)
 
 # Instantiating a PDF reader on the Microsoft annual report,
 # enabling sequential access to each page object for text extraction.
@@ -168,7 +169,65 @@ retrieved_documents = results["documents"][0]
 
 # Iterating over each retrieved chunk, printing a wrapped preview
 # to improve readability in the console.
-for document in retrieved_documents:
-    print("---------------------------------------------------------------------")
-    print(word_wrap(document))
-    print("---------------------------------------------------------------------")
+# for document in retrieved_documents:
+#    print("---------------------------------------------------------------------")
+#    print(word_wrap(document))
+#    print("---------------------------------------------------------------------")
+
+def augment_query_generated(query, model="gpt-5-nano"):
+    # Defining the system prompt that frames the model’s role.
+    # In this case, the model is instructed to act as a financial research assistant
+    # and generate plausible answers that one might expect in annual reports.
+    prompt = """You are a helpful expert financial research assistant. 
+   Provide an example answer to the given question, that might be found in a document like an annual report."""
+
+    # Constructing the message sequence for the chat API.
+    # - The system message sets the context and behavioral constraints.
+    # - The user message carries the actual input query.
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": query},
+    ]
+
+    # Sending the prompt and query to the LLM via the chat completion endpoint.
+    # The selected model defaults to "gpt-5-nano", but can be overridden.
+    response = llm_client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=0.7,
+    )
+
+    # Extracting the assistant’s generated output.
+    # The API returns a list of choices; here, the content of the first choice is selected.
+    content = response.choices[0].message.content
+
+    # Returning the model-generated example answer, which can be used
+    # for downstream query expansion in the RAG pipeline.
+    return content
+
+
+# Defining the original user query, representing the information need.
+original_query = "What was the total profit for the year, and how does it compare to the previous year?"
+
+# Augmenting the query by generating a hypothetical answer with the LLM.
+# This "pseudo-answer" simulates what might be found in the target documents.
+hypothetical_answer = augment_query_generated(original_query)
+
+# Concatenating the original query with the generated hypothetical answer.
+# The two strings are joined with a single space, producing a richer query
+# that combines both the question and a possible answer for retrieval.
+joint_query = f"{original_query} {hypothetical_answer}"
+
+# Pretty the combined query for readability.
+# print(word_wrap(joint_query))
+
+# Executing the semantic search in the Chroma collection.
+# - query_texts: the augmented query used for retrieval
+# - n_results: number of top matches to return
+# - include: request both documents and embeddings for inspection
+results = chroma_collection.query(
+    query_texts=joint_query, n_results=5, include=["documents", "embeddings"]
+)
+
+# Extracting the retrieved document chunks corresponding to the first (and only) query.
+retrieved_documents = results["documents"][0]
