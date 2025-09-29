@@ -2,12 +2,15 @@ from helper_utils import word_wrap
 from pypdf import PdfReader
 import os 
 from openai import OpenAI
+import chromadb
 
 # --- Splitting the document into chunks using LangChain utilities -------------
 from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
     SentenceTransformersTokenTextSplitter,
 )
+
+from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
 
 OPENAI_API = os.getenv("OPENAI_API")
 
@@ -107,4 +110,65 @@ for text in character_split_texts:
 # This makes the resulting text segments directly compatible with any LLM workflow.
 # ------------------------------------------------------------------------------
 
-from chromadb.utils.embedding_functions import SentenceTransformerEmbeddingFunction
+# --- Creating and populating a Chroma collection ------------------------------
+
+# Defining the embedding function to be used by Chroma for document ingestion.
+# SentenceTransformerEmbeddingFunction applies a local sentence-transformers model
+# (e.g., MiniLM), producing vector representations without external API calls.
+embedding_function = SentenceTransformerEmbeddingFunction()
+
+# Instantiating a local Chroma client.
+# This client manages vector storage and similarity search operations on disk.
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+
+# Creating a new collection named "microsoft-collection".
+# The embedding_function is passed so that whenever documents are added,
+# Chroma automatically computes embeddings for them at ingestion time.
+chroma_collection = chroma_client.get_or_create_collection(
+    "microsoft-collection", embedding_function=embedding_function
+)
+
+# ------------------------------------------------------------------------------
+
+# Generating unique identifiers for each text chunk.
+# For N chunks in token_split_texts, ids is simply ["0", "1", ..., "N-1"].
+# This ensures that each chunk can be uniquely referenced inside the collection.
+ids = [str(i) for i in range(len(token_split_texts))]
+
+# Adding documents (chunks) to the Chroma collection.
+# - ids: unique identifiers assigned to each chunk
+# - documents: the raw text of each chunk
+# With the embedding_function defined above, embeddings are computed automatically.
+chroma_collection.add(ids=ids, documents=token_split_texts)
+
+# Returning the total number of documents stored in the collection.
+# This acts as a diagnostic check to confirm that ingestion was successful.
+count = chroma_collection.count()
+# print(count)
+
+# Defining a natural language query intended for semantic retrieval.
+# In this case, the query targets financial information about total yearly revenue.
+query = "What was the total revenue for the year?"
+
+# Executing a similarity search directly with the query text.
+# Since the collection was initialized with an embedding_function,
+# Chroma internally computes the query embedding and performs k-NN search.
+results = chroma_collection.query(
+    query_texts=[query],
+    n_results=5
+)
+
+# Extracting the retrieved documents for the first (and only) query.
+# In Chroma, 'results["documents"]' is a list of lists:
+# - each inner list corresponds to the documents retrieved for one query in 'query_texts'.
+# - this allows multiple queries to be processed in a single call,
+#   returning separate sets of documents for each query.
+# Since we only submitted a single query, [0] selects its corresponding results.
+retrieved_documents = results["documents"][0]
+
+# Iterating over each retrieved chunk, printing a wrapped preview
+# to improve readability in the console.
+for document in retrieved_documents:
+    print("---------------------------------------------------------------------")
+    print(word_wrap(document))
+    print("---------------------------------------------------------------------")
